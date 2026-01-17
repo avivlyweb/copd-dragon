@@ -11,6 +11,7 @@ const App: React.FC = () => {
   const [breathStats, setBreathStats] = useState<BreathStats>({
     duration: 0,
     intensity: 0,
+    quality: 0,
     isBreathing: false
   });
   const [sessionStats, setSessionStats] = useState<SessionStats>({
@@ -34,13 +35,12 @@ const App: React.FC = () => {
     const analyzer = audioAnalyzerRef.current;
     if (!analyzer.isReady) return;
 
-    const volume = analyzer.getVolume();
+    const { volume, quality } = analyzer.getBreathMetrics();
 
     // CALIBRATION LOGIC
     if (gameState === GameState.CALIBRATING) {
-      // Just visually show volume during calibration so user knows mic works
-      // The actual calculation happens in the useEffect timer below
-      setBreathStats(prev => ({ ...prev, intensity: volume })); 
+      // Just visually show volume during calibration
+      setBreathStats(prev => ({ ...prev, intensity: volume, quality })); 
       rafRef.current = requestAnimationFrame(updateLoop);
       return;
     }
@@ -48,14 +48,25 @@ const App: React.FC = () => {
     if (gameState !== GameState.ACTIVE) return;
 
     // GAMEPLAY LOGIC
-    // Dynamic Threshold: Must be significantly higher than the calibrated noise floor
-    const triggerThreshold = noiseFloor * 1.5 + 0.05; // Safety margin
-    const stopThreshold = noiseFloor * 1.2; 
+    // Thresholds
+    const volumeTrigger = noiseFloor * 1.5 + 0.05; 
+    const volumeStop = noiseFloor * 1.2;
+    
+    // Quality Threshold: Pursed lip breathing usually has quality > 0.3
+    // Open mouth huffing or talking usually has quality < 0.2
+    const qualityThreshold = 0.25;
 
     // Hysteresis
-    const isBreathingNow = breathStats.isBreathing 
-      ? volume > stopThreshold 
-      : volume > triggerThreshold;
+    let isBreathingNow = false;
+
+    if (breathStats.isBreathing) {
+        // To keep breathing, we just need volume. We relax quality check during breath
+        // to prevent flickering if user wavers slightly.
+        isBreathingNow = volume > volumeStop;
+    } else {
+        // To START breathing, we need Volume AND Good Technique (High Quality)
+        isBreathingNow = volume > volumeTrigger && quality > qualityThreshold;
+    }
 
     if (isBreathingNow) {
        if (!breathStats.isBreathing) {
@@ -64,13 +75,13 @@ const App: React.FC = () => {
        
        const duration = (Date.now() - breathStartTimeRef.current) / 1000;
        
-       // Map volume to intensity (clamped 0-1), scaling based on expected max
-       // Intensity is purely for visuals (how big the fire is)
+       // Visual intensity
        const visualIntensity = Math.min((volume - noiseFloor) * 2.5, 1.0);
 
        setBreathStats({
          isBreathing: true,
          intensity: Math.max(0, visualIntensity),
+         quality: quality,
          duration: duration
        });
        
@@ -90,7 +101,8 @@ const App: React.FC = () => {
 
       setBreathStats({
         isBreathing: false,
-        intensity: 0,
+        intensity: volume * 0.5, // Show residual input for feedback
+        quality: quality,
         duration: 0
       });
     }
@@ -118,7 +130,8 @@ const App: React.FC = () => {
         
         // Sample noise
         if (audioAnalyzerRef.current.isReady) {
-          noiseSamples.push(audioAnalyzerRef.current.getVolume());
+          const { volume } = audioAnalyzerRef.current.getBreathMetrics();
+          noiseSamples.push(volume);
         }
 
         if (progress >= 100) {
@@ -126,10 +139,10 @@ const App: React.FC = () => {
           // Calculate average noise floor
           const avgNoise = noiseSamples.reduce((a, b) => a + b, 0) / (noiseSamples.length || 1);
           console.log("Calibration Complete. Noise Floor:", avgNoise);
-          setNoiseFloor(Math.max(avgNoise, 0.02)); // Ensure non-zero floor
+          setNoiseFloor(Math.max(avgNoise, 0.02)); 
           setGameState(GameState.ACTIVE);
         }
-      }, 100); // 2 seconds total (20 steps * 100ms)
+      }, 100); 
 
       return () => clearInterval(interval);
     }

@@ -2,40 +2,28 @@ export class AudioAnalyzer {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
   private microphone: MediaStreamAudioSourceNode | null = null;
-  private filter: BiquadFilterNode | null = null;
   private dataArray: Uint8Array | null = null;
   private stream: MediaStream | null = null;
   
   public isReady: boolean = false;
-  public baselineNoise: number = 0.05; // Default baseline
 
   async initialize(): Promise<void> {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ 
         audio: { 
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false // Important for spirometry: we want raw volume changes
+          echoCancellation: false, // Turn off for better spectral analysis
+          noiseSuppression: false, // We want to hear the raw breath noise
+          autoGainControl: false 
         } 
       });
 
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
-      // Create Filter: High-pass at 800Hz.
-      // This removes deep voices, AC hum, and traffic, isolating the "hiss" of breath.
-      this.filter = this.audioContext.createBiquadFilter();
-      this.filter.type = 'highpass';
-      this.filter.frequency.value = 800; 
-
       this.analyser = this.audioContext.createAnalyser();
-      this.analyser.fftSize = 512; // Higher resolution
-      this.analyser.smoothingTimeConstant = 0.3; // Responsive
+      this.analyser.fftSize = 1024; // High resolution for frequency analysis
+      this.analyser.smoothingTimeConstant = 0.2; // Fast response
       
       this.microphone = this.audioContext.createMediaStreamSource(this.stream);
-      
-      // Chain: Mic -> Filter -> Analyser
-      this.microphone.connect(this.filter);
-      this.filter.connect(this.analyser);
+      this.microphone.connect(this.analyser);
       
       this.dataArray = new Uint8Array(this.analyser.frequencyBinCount);
       this.isReady = true;
@@ -45,32 +33,58 @@ export class AudioAnalyzer {
     }
   }
 
-  // Returns normalized volume (0-1) relative to expected breath levels
-  getVolume(): number {
-    if (!this.isReady || !this.analyser || !this.dataArray) return 0;
+  // Returns spectral metrics
+  getBreathMetrics(): { volume: number; quality: number } {
+    if (!this.isReady || !this.analyser || !this.dataArray || !this.audioContext) {
+      return { volume: 0, quality: 0 };
+    }
 
     this.analyser.getByteFrequencyData(this.dataArray);
 
-    let sum = 0;
-    const length = this.dataArray.length;
-    
-    // We only care about the filtered input now.
-    for (let i = 0; i < length; i++) {
-      sum += this.dataArray[i] * this.dataArray[i];
-    }
-    
-    const rms = Math.sqrt(sum / length);
-    
-    // Normalize logic: 
-    // Typical breath RMS might be 10-50 depending on mic. Max is 255.
-    // We scale it so 0.0 is silence, 1.0 is a strong blow.
-    const normalized = Math.min(1, rms / 60); 
-    return normalized;
-  }
+    const sampleRate = this.audioContext.sampleRate;
+    const binSize = sampleRate / this.analyser.fftSize; // e.g., 48000 / 1024 = ~46.8Hz per bin
 
-  // Measures background noise for a few frames
-  setBaseline(noiseLevel: number) {
-    this.baselineNoise = noiseLevel;
+    // Define Frequency Bands
+    // Low Band: 0Hz - 600Hz (Mains hum, Traffic, Human Voice Fundamentals)
+    const lowStartBin = Math.floor(0 / binSize);
+    const lowEndBin = Math.floor(600 / binSize);
+
+    // High Band: 2000Hz - 8000Hz (The "Hiss" of Pursed Lip Breathing)
+    const highStartBin = Math.floor(2000 / binSize);
+    const highEndBin = Math.floor(8000 / binSize);
+
+    let lowEnergy = 0;
+    let highEnergy = 0;
+
+    // Calculate Low Energy Average
+    for (let i = lowStartBin; i <= lowEndBin; i++) {
+      lowEnergy += this.dataArray[i];
+    }
+    lowEnergy /= (lowEndBin - lowStartBin + 1);
+
+    // Calculate High Energy Average
+    for (let i = highStartBin; i <= highEndBin; i++) {
+      highEnergy += this.dataArray[i];
+    }
+    highEnergy /= (highEndBin - highStartBin + 1);
+
+    // --- METRICS CALCULATION ---
+
+    // Volume: We primarily care about the High Band volume for breath intensity.
+    // Scale: 0-255 -> 0.0-1.0
+    // We amplify it slightly because breath sounds are quiet.
+    const volume = Math.min(1.0, (highEnergy / 255) * 4.0);
+
+    // Quality: The ratio of High Frequency content to Low Frequency content.
+    // PLB has high hiss (High Freq) and low voice (Low Freq).
+    // Talking has high voice (Low Freq) and low hiss (High Freq).
+    // A value close to 1.0 means "Pure Hiss". A value near 0 means "Pure Hum".
+    
+    // Protection against division by zero
+    const denominator = lowEnergy + highEnergy + 1; 
+    const quality = highEnergy / denominator;
+
+    return { volume, quality };
   }
 
   cleanup(): void {

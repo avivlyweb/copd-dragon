@@ -1,6 +1,7 @@
 export interface BreathStats {
   duration: number;
   intensity: number; // 0.0 to 1.0
+  quality: number; // 0.0 to 1.0 (Ratio of high freq vs low freq energy)
   isBreathing: boolean;
 }
 

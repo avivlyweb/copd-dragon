@@ -1,6 +1,6 @@
 import React from 'react';
 import { GameState, SessionStats, BreathStats } from '../../types';
-import { Mic, Pause, RotateCcw, Wind, Gauge } from 'lucide-react';
+import { Mic, Pause, RotateCcw, Wind, Gauge, AlertCircle } from 'lucide-react';
 
 interface OverlayProps {
   gameState: GameState;
@@ -163,6 +163,17 @@ const Overlay: React.FC<OverlayProps> = ({
 
       {/* Center Feedback */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center w-full pointer-events-none">
+        
+        {/* Technique Correction */}
+        {breathStats.intensity > 0.2 && !breathStats.isBreathing && (
+           <div className="animate-pulse flex flex-col items-center">
+             <AlertCircle className="text-yellow-500 mb-2 h-12 w-12" />
+             <h2 className="text-2xl font-bold text-yellow-500 tracking-wider">PURSE LIPS</h2>
+             <p className="text-sm text-gray-400 mt-1">Make a "hissing" sound</p>
+           </div>
+        )}
+
+        {/* Positive Reinforcement */}
         {breathStats.isBreathing && breathStats.duration > 4.0 && (
            <div className="animate-bounce">
              <h1 className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-b from-yellow-300 to-red-600 drop-shadow-[0_0_15px_rgba(255,100,0,0.8)]">
