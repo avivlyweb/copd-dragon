@@ -1,0 +1,7 @@
+{
+  "name": "COPD Dragon",
+  "description": "A gamified respiratory rehabilitation tool transforming breathing exercises into an epic dragon fire-breathing experience.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
